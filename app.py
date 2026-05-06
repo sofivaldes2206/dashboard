@@ -1,25 +1,19 @@
 import streamlit as st
-import pandas as pd
+import pd as pd
 from supabase import create_client
 
-# -------------------------
 # CONFIGURACIÓN
-# -------------------------
 st.set_page_config(page_title="Dashboard Ejecutivo - Cementos", layout="wide")
 
 st.title("📊 Inteligencia de Precios - Cementos")
 st.caption("Monitoreo competitivo en ferreterías")
 
-# -------------------------
 # CONEXIÓN
-# -------------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# -------------------------
 # TRAER Y LIMPIAR DATOS
-# -------------------------
 try:
     res = supabase.table("Datos").select("*").execute()
     df_raw = pd.DataFrame(res.data)
@@ -31,23 +25,26 @@ if df_raw.empty:
     st.error("⚠️ La tabla 'Datos' está vacía.")
     st.stop()
 
-# Mapeo y limpieza inicial
+# Mapeo de columnas
 df_raw["marca"] = df_raw["marca_cemento1"]
 df_raw["precio"] = pd.to_numeric(df_raw["precio_cop1"], errors='coerce')
-# IMPORTANTE: Solo trabajamos con filas que tengan precio y marca para los KPIs
 df = df_raw.dropna(subset=["marca", "precio"]).copy()
 
-# -------------------------
 # FILTROS (SIDEBAR)
-# -------------------------
 with st.sidebar:
     st.header("🎛️ Filtros")
     
-    # Extraemos opciones únicas de lo que sí tiene datos
-    ciudades_disp = sorted(df["ciudad"].unique()) if "ciudad" in df.columns else []
+    if "ciudad" in df.columns:
+        ciudades_limpias = df["ciudad"].dropna().unique()
+        ciudades_disp = sorted([str(c) for c in ciudades_limpias])
+    else:
+        ciudades_disp = []
+        
     ciudad_sel = st.multiselect("Ciudad", ciudades_disp)
     
-    marcas_disp = sorted(df["marca"].unique())
+    marcas_limpias = df["marca"].dropna().unique()
+    marcas_disp = sorted([str(m) for m in marcas_limpias])
+    
     marca_sel = st.multiselect("Marca", marcas_disp)
 
 # Aplicar filtros
@@ -56,11 +53,9 @@ if ciudad_sel:
 if marca_sel:
     df = df[df["marca"].isin(marca_sel)]
 
-# -------------------------
 # VISUALIZACIÓN
-# -------------------------
 if df.empty:
-    st.warning("🔎 No hay datos que coincidan con estos filtros. Intenta con otra combinación.")
+    st.warning("🔎 No hay datos que coincidan con estos filtros.")
 else:
     # KPIs
     st.markdown("### 📌 Estado del mercado")
@@ -85,7 +80,7 @@ else:
     else:
         col4.metric("Diferencia", "N/A")
 
-    # Gráficos
+    # GRÁFICOS
     col_left, col_right = st.columns(2)
     with col_left:
         st.markdown("### ⚖️ Promedio por Marca")
@@ -94,6 +89,6 @@ else:
         st.markdown("### 🌍 Precios por Ciudad")
         st.bar_chart(df.groupby("ciudad")["precio"].mean())
 
-# Detalle siempre visible al final
+# TABLA DETALLE
 with st.expander("📋 Ver detalle de la tabla"):
     st.dataframe(df)
