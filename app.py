@@ -21,35 +21,34 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # -------------------------
 # 📥 TRAER DATOS
 # -------------------------
-clientes = supabase.table("clientes").select("*").execute().data
-precios = supabase.table("precios").select("*").execute().data
-
-clientes = pd.DataFrame(clientes)
-precios = pd.DataFrame(precios)
-
-# 🔍 DEBUG (puedes borrar luego)
-st.write("Clientes:", clientes.head())
-st.write("Precios:", precios.head())
-
-# -------------------------
-# VALIDACIÓN
-# -------------------------
-if clientes.empty or precios.empty:
-    st.error("⚠️ No hay datos. Revisa Supabase (RLS o tablas vacías)")
+try:
+    res = supabase.table("Datos").select("*").execute()
+    df = pd.DataFrame(res.data)
+except Exception as e:
+    st.error(f"Error de conexión: {e}")
     st.stop()
 
 # -------------------------
-# UNIÓN
+# VALIDACIÓN Y FORMATEO
 # -------------------------
-df = precios.merge(clientes, left_on="cliente_id", right_on="id")
+if df.empty:
+    st.error("⚠️ La tabla 'Datos' está vacía o el RLS está bloqueando el acceso.")
+    st.stop()
+
+if "fecha" in df.columns:
+    df["fecha"] = pd.to_datetime(df["fecha"])
 
 # -------------------------
 # FILTROS
 # -------------------------
 with st.sidebar:
     st.header("🎛️ Filtros")
-    ciudad = st.multiselect("Ciudad", sorted(df["ciudad"].dropna().unique()))
-    marca = st.multiselect("Marca", sorted(df["marca"].dropna().unique()))
+    
+    ciudades_disp = sorted(df["ciudad"].dropna().unique()) if "ciudad" in df.columns else []
+    ciudad = st.multiselect("Ciudad", ciudades_disp)
+    
+    marcas_disp = sorted(df["marca"].dropna().unique()) if "marca" in df.columns else []
+    marca = st.multiselect("Marca", marcas_disp)
 
 if ciudad:
     df = df[df["ciudad"].isin(ciudad)]
@@ -60,66 +59,54 @@ if marca:
 # -------------------------
 # KPIs
 # -------------------------
-st.markdown("### 📌 Estado del mercado")
+if "precio" in df.columns:
+    st.markdown("### 📌 Estado del mercado")
+    col1, col2, col3, col4 = st.columns(4)
 
-col1, col2, col3, col4 = st.columns(4)
-
-if not df.empty:
     precio_prom = df["precio"].mean()
-    argos = df[df["marca"] == "ARGOS"]
-    competencia = df[df["marca"] != "ARGOS"]
+    
+    # Manejo de marca ARGOS (case insensitive)
+    mask_argos = df["marca"].str.upper() == "ARGOS" if "marca" in df.columns else pd.Series([False]*len(df))
+    argos = df[mask_argos]
+    competencia = df[~mask_argos]
 
     col1.metric("Mercado", f"${int(precio_prom):,}")
-    col2.metric("ARGOS", f"${int(argos['precio'].mean()):,}" if not argos.empty else "Sin datos")
-    col3.metric("Competencia", f"${int(competencia['precio'].mean()):,}" if not competencia.empty else "Sin datos")
+    
+    val_argos = argos['precio'].mean() if not argos.empty else 0
+    col2.metric("ARGOS", f"${int(val_argos):,}" if val_argos > 0 else "Sin datos")
+    
+    val_comp = competencia['precio'].mean() if not competencia.empty else 0
+    col3.metric("Competencia", f"${int(val_comp):,}" if val_comp > 0 else "Sin datos")
 
-    if not argos.empty and not competencia.empty:
-        diff = argos["precio"].mean() - competencia["precio"].mean()
+    if val_argos > 0 and val_comp > 0:
+        diff = val_argos - val_comp
         col4.metric("Diferencia", f"${int(diff):,}")
+        
+        st.markdown("### 💡 Insight clave")
+        if diff < 0:
+            st.error("🔴 ARGOS está más barato que el mercado")
+        elif diff > 0:
+            st.success("🟢 ARGOS está por encima del mercado")
     else:
         col4.metric("Diferencia", "N/A")
 
 # -------------------------
-# INSIGHT
-# -------------------------
-st.markdown("### 💡 Insight clave")
-
-if not df.empty and not argos.empty and not competencia.empty:
-    if diff < 0:
-        st.error("🔴 ARGOS está más barato que el mercado → posible pérdida de margen")
-    elif diff > 0:
-        st.success("🟢 ARGOS está por encima del mercado → oportunidad de rentabilidad")
-    else:
-        st.info("🟡 ARGOS alineado al mercado")
-else:
-    st.info("No hay suficientes datos")
-
-# -------------------------
 # GRÁFICOS
 # -------------------------
-st.markdown("### ⚖️ Comparación por marca")
-st.bar_chart(df.groupby("marca")["precio"].mean())
+col_left, col_right = st.columns(2)
 
-st.markdown("### 🌍 Precios por ciudad")
-st.bar_chart(df.groupby("ciudad")["precio"].mean())
+with col_left:
+    if "marca" in df.columns and "precio" in df.columns:
+        st.markdown("### ⚖️ Promedio por Marca")
+        st.bar_chart(df.groupby("marca")["precio"].mean())
 
-# -------------------------
-# TENDENCIA
-# -------------------------
-st.markdown("### 📈 Tendencia")
-
-df["fecha"] = pd.to_datetime(df["fecha"])
-st.line_chart(df.set_index("fecha")["precio"])
+with col_right:
+    if "ciudad" in df.columns and "precio" in df.columns:
+        st.markdown("### 🌍 Precios por Ciudad")
+        st.bar_chart(df.groupby("ciudad")["precio"].mean())
 
 # -------------------------
-# RANKING
+# TABLA DETALLE
 # -------------------------
-st.markdown("### 🏆 Ranking de marcas")
-ranking = df.groupby("marca")["precio"].mean().sort_values()
-st.dataframe(ranking)
-
-# -------------------------
-# TABLA
-# -------------------------
-with st.expander("📋 Ver detalle"):
+with st.expander("📋 Ver detalle de la tabla Datos"):
     st.dataframe(df)
